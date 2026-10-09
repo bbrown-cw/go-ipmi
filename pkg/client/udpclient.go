@@ -20,6 +20,9 @@ var udpReadTimeoutSeconds = 10
 // elapses without any inbound datagram for which the match callback returns true.
 var errNoDatagramMatched = errors.New("udp exchange: no datagram matched before deadline")
 
+// errUDPConnClosed is returned when Close runs between initConn and the exchange.
+var errUDPConnClosed = fmt.Errorf("udp exchange: %w", net.ErrClosed)
+
 // UDPClient exposes some common methods for communicating with UDP target addr.
 type UDPClient struct {
 	// Target Host
@@ -161,6 +164,15 @@ func (c *UDPClient) Exchange(ctx context.Context, reader io.Reader) ([]byte, err
 			return
 		}
 
+		// Close can take the lock after initConn released it.
+		if c.conn == nil {
+			resultChan <- struct {
+				data []byte
+				err  error
+			}{nil, errUDPConnClosed}
+			return
+		}
+
 		// Step 2: Send the request
 		_, err := io.Copy(c.conn, reader)
 		if err != nil {
@@ -263,6 +275,15 @@ func (c *UDPClient) ExchangeUntilMatch(ctx context.Context, reader io.Reader, ma
 		defer c.lock.Unlock()
 
 		if ctx.Err() != nil {
+			return
+		}
+
+		// Close can take the lock after initConn released it.
+		if c.conn == nil {
+			resultChan <- struct {
+				data []byte
+				err  error
+			}{nil, errUDPConnClosed}
 			return
 		}
 
